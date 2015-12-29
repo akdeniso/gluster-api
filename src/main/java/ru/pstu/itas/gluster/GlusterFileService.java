@@ -53,15 +53,13 @@ public class GlusterFileService {
 		while ((fileStream.read(buffer, 0, buffer.length)) != -1) {
 			Files.write(filePath, buffer, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
 		}
-
-		// lucene.index(filePath.toFile());
-
+		lucene.index(filePath);
 		return ident;
 	}
 
 	public void deleteFile(String ident) throws IOException, URISyntaxException {
 		Path filePath = getPathByIdent(ident);
-		// lucene.removeFromIndex(filePath.toFile().getName());
+		lucene.removeFromIndex(filePath.getFileName().toString());
 		Files.deleteIfExists(filePath);
 	}
 
