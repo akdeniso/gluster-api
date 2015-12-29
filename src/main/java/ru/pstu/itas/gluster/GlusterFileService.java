@@ -4,25 +4,37 @@ import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardOpenOption;
+import java.util.Set;
 import java.util.UUID;
 
 import javax.ws.rs.WebApplicationException;
 import javax.ws.rs.core.StreamingOutput;
 
+import org.apache.lucene.queryParser.ParseException;
+
+import ru.pstu.itas.lucene.IdentName;
+import ru.pstu.itas.lucene.LuceneFrontend;
+
 public class GlusterFileService {
 	private static final char IDENT_NAME_SEPARATOR = '@';
 
+	private final LuceneFrontend lucene;
+
 	private final String mountUri;
 
-	public GlusterFileService(String host, String volume) {
-		this.mountUri = "gluster://" + host + ":" + volume;
+	public GlusterFileService(String host, String volume, String luceneIndexDir) {
+		this.mountUri = "gluster://" + host + ":" + volume + "/";
+		lucene = new LuceneFrontend(new File(luceneIndexDir));
 	}
 
-	public FileDownloadData getFile(final String ident) throws IOException {
+	public FileDownloadData getFile(final String ident) throws IOException, URISyntaxException {
 		final Path path = getPathByIdent(ident);
 		StreamingOutput out = new StreamingOutput() {
 			@Override
@@ -31,45 +43,45 @@ public class GlusterFileService {
 				output.flush();
 			}
 		};
-		return new FileDownloadData(out, getFileNameWithoutIdent(path.toFile()));
+		return new FileDownloadData(out, getFileNameWithoutIdent(path.getFileName().toString()));
 	}
 
-	public String saveFile(String name, InputStream fileStream) throws IOException {
+	public String saveFile(String name, InputStream fileStream) throws IOException, URISyntaxException {
 		String ident = UUID.randomUUID().toString();
+		Path filePath = Paths.get(new URI(mountUri + ident + IDENT_NAME_SEPARATOR + name));
+		byte[] buffer = new byte[512];
+		while ((fileStream.read(buffer, 0, buffer.length)) != -1) {
+			Files.write(filePath, buffer, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+		}
 
-		OutputStream out = Files.newOutputStream(Paths.get(mountUri + "/" + ident + IDENT_NAME_SEPARATOR + name));
-		int read = 0;
-		byte[] bytes = new byte[1024];
-		while ((read = fileStream.read(bytes)) != -1)
-			out.write(bytes, 0, read);
-		out.flush();
-		out.close();
+		// lucene.index(filePath.toFile());
 
 		return ident;
 	}
 
-	public void deleteFile(String ident) throws IOException {
-		Files.deleteIfExists(getPathByIdent(ident));
+	public void deleteFile(String ident) throws IOException, URISyntaxException {
+		Path filePath = getPathByIdent(ident);
+		// lucene.removeFromIndex(filePath.toFile().getName());
+		Files.deleteIfExists(filePath);
 	}
 
-	private Path getPathByIdent(final String ident) throws IOException {
-		DirectoryStream.Filter<Path> filter = new DirectoryStream.Filter<Path>() {
-			@Override
-			public boolean accept(Path entry) throws IOException {
-				return entry.toFile().getName().startsWith(ident);
-			}
-		};
-		DirectoryStream<Path> stream = Files.newDirectoryStream(Paths.get(mountUri), filter);
-		if (!stream.iterator().hasNext())
-			throw new IOException("Path was not found by ident " + ident);
-		return stream.iterator().next();
+	public Set<IdentName> search(String content) throws IOException, ParseException {
+		return lucene.search(content);
 	}
 
-	private String getFileNameWithoutIdent(File file) {
-		String name = file.getName();
-		int separatorIdx = name.indexOf(IDENT_NAME_SEPARATOR);
+	private Path getPathByIdent(final String ident) throws IOException, URISyntaxException {
+		DirectoryStream<Path> stream = Files.newDirectoryStream(Paths.get(new URI(mountUri)));
+		for (Path p : stream) {
+			if (p.getFileName().toString().contains(ident))
+				return p;
+		}
+		return null;
+	}
+
+	private String getFileNameWithoutIdent(String fullname) {
+		int separatorIdx = fullname.indexOf(IDENT_NAME_SEPARATOR);
 		if (separatorIdx == -1)
-			return name;
-		return name.substring(separatorIdx + 1);
+			return fullname;
+		return fullname.substring(separatorIdx + 1);
 	}
 }
